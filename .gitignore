@@ -1,1 +1,8 @@
 .env
+*.pem
+*.csv
+__pycache__/
+*.pyc
+.pytest_cache/
+test_output.png
+test_cf.py
