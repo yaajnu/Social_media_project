@@ -1,0 +1,4 @@
+# file: C:\Projects\Social_media_proj\src\ingestion\reddit_scraper.py
+# hypothesis_version: 6.151.2
+
+[654, 987, 1231, 1842, 2103, 18732, 22456, 29874, 38910, 45231, '404', '429', 'Too Many Requests', 'children', 'data', 'num_comments', 'page not found', 'score', 'selftext', 'title', 'url']

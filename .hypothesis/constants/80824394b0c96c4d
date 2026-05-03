@@ -1,0 +1,4 @@
+# file: C:\Projects\Social_media_proj\src\ai\generator.py
+# hypothesis_version: 6.151.2
+
+['content', 'gemini', 'gemini-1.5-flash', 'gpt-4o-mini', 'role', 'user']

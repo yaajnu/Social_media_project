@@ -1,0 +1,4 @@
+# file: C:\Projects\Social_media_proj\src\config.py
+# hypothesis_version: 6.151.2
+
+['.env', 'gemini', 'openai', 'utf-8']

@@ -1,0 +1,4 @@
+# file: C:\Projects\Social_media_proj\src\models\schemas.py
+# hypothesis_version: 6.151.2
+
+[500, 'mixed', 'negative', 'neutral', 'positive']
