@@ -24,7 +24,7 @@ cd ~/app
 git pull origin main
 
 echo "=== Installing any new dependencies ==="
-~/miniconda3/envs/reddit_proj_env/bin/pip install -r requirements.txt --quiet
+~/app/venv/bin/pip install -r ~/app/requirements.txt --quiet
 
 echo "=== Restarting Streamlit service ==="
 sudo systemctl restart streamlit-app

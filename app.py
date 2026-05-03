@@ -17,7 +17,139 @@ from src.publishing.twitter_publisher import TwitterPublishError, post_to_twitte
 from src.publishing.instagram_publisher import InstagramPublishError, post_to_instagram
 from src.publishing.image_generator import ImageGenerationError, generate_image
 from src.config import AppConfig
-from src.publishing.twitter_publisher import TwitterPublishError, post_to_twitter
+from src.auth.cognito import AuthError, CognitoAuth
+
+# ── Auth setup ────────────────────────────────────────────────────────────────
+_cfg = AppConfig()
+_auth = CognitoAuth(
+    user_pool_id=_cfg.cognito_user_pool_id,
+    client_id=_cfg.cognito_client_id,
+    region=_cfg.cognito_region,
+)
+
+
+def _render_auth() -> bool:
+    """
+    Render the login/signup/confirm UI.
+    Returns True if the user is authenticated, False otherwise.
+    """
+    # Already logged in
+    if st.session_state.get("access_token"):
+        return True
+
+    st.title("📈 Trend-to-Content Automation Engine")
+    st.markdown("---")
+
+    tab_login, tab_signup, tab_confirm, tab_reset = st.tabs(
+        ["🔐 Login", "📝 Sign Up", "✅ Confirm Account", "🔑 Reset Password"]
+    )
+
+    # ── Login ──────────────────────────────────────────────────────────────────
+    with tab_login:
+        st.subheader("Sign in to your account")
+        email = st.text_input("Email", key="login_email")
+        password = st.text_input("Password", type="password", key="login_password")
+        if st.button("Login", use_container_width=True, key="login_btn"):
+            if not email or not password:
+                st.error("Please enter your email and password.")
+            else:
+                with st.spinner("Signing in..."):
+                    try:
+                        tokens = _auth.login(email, password)
+                        user = _auth.get_user(tokens["access_token"])
+                        st.session_state["access_token"] = tokens["access_token"]
+                        st.session_state["refresh_token"] = tokens["refresh_token"]
+                        st.session_state["user_email"] = user["email"]
+                        st.rerun()
+                    except AuthError as e:
+                        st.error(str(e))
+
+    # ── Sign Up ────────────────────────────────────────────────────────────────
+    with tab_signup:
+        st.subheader("Create a new account")
+        su_email = st.text_input("Email", key="su_email")
+        su_password = st.text_input(
+            "Password",
+            type="password",
+            key="su_password",
+            help="Min 8 chars, must include uppercase, lowercase, and number.",
+        )
+        su_password2 = st.text_input(
+            "Confirm Password", type="password", key="su_password2"
+        )
+        if st.button("Create Account", use_container_width=True, key="signup_btn"):
+            if not su_email or not su_password:
+                st.error("Please fill in all fields.")
+            elif su_password != su_password2:
+                st.error("Passwords do not match.")
+            else:
+                with st.spinner("Creating account..."):
+                    try:
+                        _auth.signup(su_email, su_password)
+                        st.success(
+                            "Account created! Check your email for a confirmation code, then use the 'Confirm Account' tab."
+                        )
+                    except AuthError as e:
+                        st.error(str(e))
+
+    # ── Confirm Account ────────────────────────────────────────────────────────
+    with tab_confirm:
+        st.subheader("Confirm your account")
+        st.caption("Enter the 6-digit code sent to your email after sign up.")
+        cf_email = st.text_input("Email", key="cf_email")
+        cf_code = st.text_input("Confirmation Code", key="cf_code")
+        if st.button("Confirm Account", use_container_width=True, key="confirm_btn"):
+            if not cf_email or not cf_code:
+                st.error("Please enter your email and confirmation code.")
+            else:
+                with st.spinner("Confirming..."):
+                    try:
+                        _auth.confirm_signup(cf_email, cf_code)
+                        st.success("Account confirmed! You can now log in.")
+                    except AuthError as e:
+                        st.error(str(e))
+
+    # ── Reset Password ─────────────────────────────────────────────────────────
+    with tab_reset:
+        st.subheader("Reset your password")
+        rp_email = st.text_input("Email", key="rp_email")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(
+                "Send Reset Code", use_container_width=True, key="rp_send_btn"
+            ):
+                if not rp_email:
+                    st.error("Please enter your email.")
+                else:
+                    with st.spinner("Sending..."):
+                        try:
+                            _auth.forgot_password(rp_email)
+                            st.success("Reset code sent to your email.")
+                        except AuthError as e:
+                            st.error(str(e))
+        with col2:
+            rp_code = st.text_input("Reset Code", key="rp_code")
+            rp_new_pw = st.text_input("New Password", type="password", key="rp_new_pw")
+            if st.button(
+                "Set New Password", use_container_width=True, key="rp_confirm_btn"
+            ):
+                if not all([rp_email, rp_code, rp_new_pw]):
+                    st.error("Please fill in all fields.")
+                else:
+                    with st.spinner("Resetting..."):
+                        try:
+                            _auth.confirm_forgot_password(rp_email, rp_code, rp_new_pw)
+                            st.success("Password reset! You can now log in.")
+                        except AuthError as e:
+                            st.error(str(e))
+
+    return False
+
+
+# ── Auth gate — stop here if not logged in ────────────────────────────────────
+if not _render_auth():
+    st.stop()
+
 from src.publishing.instagram_publisher import InstagramPublishError, post_to_instagram
 
 st.set_page_config(page_title="Trend-to-Content Engine", page_icon="📈", layout="wide")
@@ -25,6 +157,26 @@ st.title("📈 Trend-to-Content Automation Engine")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
+    # User info + logout
+    user_email = st.session_state.get("user_email", "")
+    st.caption(f"Logged in as **{user_email}**")
+    if st.button("🚪 Logout", use_container_width=True):
+        access_token = st.session_state.get("access_token", "")
+        if access_token:
+            _auth.logout(access_token)
+        for key in [
+            "access_token",
+            "refresh_token",
+            "user_email",
+            "trend_summary",
+            "combined_content",
+            "topic_posts",
+            "all_topics",
+            "country",
+        ]:
+            st.session_state.pop(key, None)
+        st.rerun()
+    st.divider()
     st.header("⚙️ Settings")
     country = st.selectbox("Country", options=list(GEO_OPTIONS.keys()), index=0)
     limit = st.slider("Trends to fetch", min_value=5, max_value=20, value=10)

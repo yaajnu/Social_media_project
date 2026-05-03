@@ -1,128 +1,51 @@
 #!/bin/bash
 # =============================================================================
 # EC2 Bootstrap Script — Trend-to-Content Automation Engine
+# Uses Python venv (no conda required)
 # =============================================================================
-# This is the EC2 User Data script. Paste it into the "User data" field when
-# launching your EC2 instance (or pass via --user-data in the AWS CLI).
-#
-# It runs ONCE automatically as root when the instance first boots.
-# It will:
-#   1. Update the system and install dependencies
-#   2. Install Miniconda
-#   3. Clone your GitHub repo (or copy files from S3)
-#   4. Create the conda environment and install Python deps
-#   5. Write your .env file from environment variables
-#   6. Install and configure a systemd service so the app auto-starts on reboot
-#   7. Start the Streamlit app on port 8501
-# =============================================================================
-
 set -euo pipefail
 exec > /var/log/bootstrap.log 2>&1
 echo "=== Bootstrap started at $(date) ==="
 
-# ── CONFIGURATION — edit these before launching ──────────────────────────────
 APP_USER="ubuntu"
 APP_DIR="/home/${APP_USER}/app"
-CONDA_DIR="/home/${APP_USER}/miniconda3"
-ENV_NAME="reddit_proj_env"
-PYTHON_VERSION="3.12"
+VENV_DIR="${APP_DIR}/venv"
 STREAMLIT_PORT="8501"
-
-# Your GitHub repo URL (set to empty string to skip git clone and use S3 instead)
-GITHUB_REPO="https://github.com/YOUR_USERNAME/YOUR_REPO.git"
-
-# S3 fallback: if GITHUB_REPO is empty, the app files are downloaded from here
-# S3_BUCKET="s3://your-bucket/app.tar.gz"
+GITHUB_REPO="https://github.com/yaajnu/Social_media_project.git"
 
 # ── SYSTEM UPDATE ─────────────────────────────────────────────────────────────
 echo "=== Updating system packages ==="
 apt-get update -y
-apt-get upgrade -y
-apt-get install -y \
-    git \
-    curl \
-    wget \
-    unzip \
-    build-essential \
-    libssl-dev \
-    libffi-dev \
-    python3-dev \
-    nginx \
-    supervisor
+apt-get install -y git curl wget python3-pip python3-venv python3-dev nginx
 
-# ── INSTALL MINICONDA ─────────────────────────────────────────────────────────
-echo "=== Installing Miniconda ==="
-MINICONDA_INSTALLER="/tmp/miniconda.sh"
-wget -q "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh" \
-    -O "${MINICONDA_INSTALLER}"
-bash "${MINICONDA_INSTALLER}" -b -p "${CONDA_DIR}"
-rm "${MINICONDA_INSTALLER}"
+# ── CLONE REPO ────────────────────────────────────────────────────────────────
+echo "=== Cloning repository ==="
+rm -rf "${APP_DIR}"
+sudo -u "${APP_USER}" git clone "${GITHUB_REPO}" "${APP_DIR}"
 
-# Add conda to PATH for this script
-export PATH="${CONDA_DIR}/bin:${PATH}"
-conda init bash
+# ── CREATE VENV AND INSTALL DEPS ──────────────────────────────────────────────
+echo "=== Creating virtual environment ==="
+sudo -u "${APP_USER}" python3 -m venv "${VENV_DIR}"
 
-# ── CLONE / COPY APP ──────────────────────────────────────────────────────────
-echo "=== Setting up application files ==="
-mkdir -p "${APP_DIR}"
+echo "=== Installing dependencies ==="
+sudo -u "${APP_USER}" "${VENV_DIR}/bin/pip" install --upgrade pip -q
+sudo -u "${APP_USER}" "${VENV_DIR}/bin/pip" install -r "${APP_DIR}/requirements.txt"
 
-if [ -n "${GITHUB_REPO}" ]; then
-    echo "Cloning from GitHub: ${GITHUB_REPO}"
-    sudo -u "${APP_USER}" git clone "${GITHUB_REPO}" "${APP_DIR}"
-else
-    echo "Downloading from S3: ${S3_BUCKET}"
-    aws s3 cp "${S3_BUCKET}" /tmp/app.tar.gz
-    tar -xzf /tmp/app.tar.gz -C "${APP_DIR}" --strip-components=1
-    rm /tmp/app.tar.gz
-fi
-
-chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
-
-# ── CREATE CONDA ENVIRONMENT ──────────────────────────────────────────────────
-echo "=== Creating conda environment: ${ENV_NAME} ==="
-sudo -u "${APP_USER}" "${CONDA_DIR}/bin/conda" create \
-    -n "${ENV_NAME}" \
-    python="${PYTHON_VERSION}" \
-    -y
-
-# ── INSTALL PYTHON DEPENDENCIES ───────────────────────────────────────────────
-echo "=== Installing Python dependencies ==="
-sudo -u "${APP_USER}" "${CONDA_DIR}/envs/${ENV_NAME}/bin/pip" install \
-    --no-cache-dir \
-    -r "${APP_DIR}/requirements.txt"
-
-# Install additional deps not in requirements.txt
-sudo -u "${APP_USER}" "${CONDA_DIR}/envs/${ENV_NAME}/bin/pip" install \
-    --no-cache-dir \
-    tweepy==4.14.0 \
-    requests==2.32.5
-
-# Install Playwright browsers (needed by crawl4ai)
-echo "=== Installing Playwright browsers ==="
-sudo -u "${APP_USER}" "${CONDA_DIR}/envs/${ENV_NAME}/bin/python" \
-    -m playwright install chromium --with-deps || true
-
-# ── WRITE .env FILE ───────────────────────────────────────────────────────────
-# These values are injected via EC2 instance tags or passed as User Data
-# environment variables. Edit the values below before launching.
-echo "=== Writing .env file ==="
+# ── WRITE .env ────────────────────────────────────────────────────────────────
+echo "=== Writing .env ==="
 cat > "${APP_DIR}/.env" << 'ENVFILE'
-# Auto-generated by bootstrap script — edit via SSH if needed
 LLM_PROVIDER=gemini
 GEMINI_API_KEY=REPLACE_WITH_YOUR_GEMINI_KEY
 OPENAI_API_KEY=REPLACE_WITH_YOUR_OPENAI_KEY
 CLOUDFARE_API_KEY=REPLACE_WITH_YOUR_CLOUDFARE_KEY
 ENVFILE
-
 chown "${APP_USER}:${APP_USER}" "${APP_DIR}/.env"
 chmod 600 "${APP_DIR}/.env"
 
 # ── CONFIGURE STREAMLIT ───────────────────────────────────────────────────────
 echo "=== Configuring Streamlit ==="
-STREAMLIT_CONFIG_DIR="/home/${APP_USER}/.streamlit"
-sudo -u "${APP_USER}" mkdir -p "${STREAMLIT_CONFIG_DIR}"
-
-cat > "${STREAMLIT_CONFIG_DIR}/config.toml" << TOML
+sudo -u "${APP_USER}" mkdir -p "/home/${APP_USER}/.streamlit"
+cat > "/home/${APP_USER}/.streamlit/config.toml" << TOML
 [server]
 port = ${STREAMLIT_PORT}
 address = "0.0.0.0"
@@ -133,32 +56,24 @@ enableXsrfProtection = false
 [browser]
 gatherUsageStats = false
 TOML
+chown -R "${APP_USER}:${APP_USER}" "/home/${APP_USER}/.streamlit"
 
-chown -R "${APP_USER}:${APP_USER}" "${STREAMLIT_CONFIG_DIR}"
-
-# ── CREATE SYSTEMD SERVICE ────────────────────────────────────────────────────
-# This ensures the app restarts automatically on reboot or crash
+# ── SYSTEMD SERVICE ───────────────────────────────────────────────────────────
 echo "=== Creating systemd service ==="
 cat > /etc/systemd/system/streamlit-app.service << SERVICE
 [Unit]
-Description=Trend-to-Content Automation Engine (Streamlit)
+Description=Trend-to-Content Automation Engine
 After=network.target
-Wants=network-online.target
 
 [Service]
 Type=simple
 User=${APP_USER}
 WorkingDirectory=${APP_DIR}
-Environment="PATH=${CONDA_DIR}/envs/${ENV_NAME}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=${CONDA_DIR}/envs/${ENV_NAME}/bin/python -m streamlit run app.py \
-    --server.port ${STREAMLIT_PORT} \
-    --server.address 0.0.0.0 \
-    --server.headless true
+ExecStart=${VENV_DIR}/bin/python -m streamlit run app.py --server.port ${STREAMLIT_PORT} --server.address 0.0.0.0 --server.headless true
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=streamlit-app
 
 [Install]
 WantedBy=multi-user.target
@@ -168,9 +83,8 @@ systemctl daemon-reload
 systemctl enable streamlit-app
 systemctl start streamlit-app
 
-# ── CONFIGURE NGINX REVERSE PROXY (optional but recommended) ─────────────────
-# Nginx sits in front of Streamlit on port 80 so you don't need :8501 in the URL
-echo "=== Configuring Nginx reverse proxy ==="
+# ── NGINX ─────────────────────────────────────────────────────────────────────
+echo "=== Configuring Nginx ==="
 cat > /etc/nginx/sites-available/streamlit << NGINX
 server {
     listen 80;
@@ -183,7 +97,6 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_read_timeout 86400;
     }
 }
@@ -195,4 +108,4 @@ nginx -t && systemctl restart nginx
 systemctl enable nginx
 
 echo "=== Bootstrap complete at $(date) ==="
-echo "=== App will be available at http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4) ==="
+echo "=== App available at http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4) ==="
